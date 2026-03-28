@@ -31,6 +31,192 @@
 
 ---
 
+## 如何创建独立 Agent
+
+### 架构说明
+独立 Agent 支持**两种使用方式**：
+1. **直接对话**：用户在飞书找该 Agent 的 bot 直接聊天
+2. **协作调度**：其他 Agent 可以通过 `sessions_send` 调用它
+
+```
+┌─────────────────────────────────────────────┐
+│                    用户                       │
+│         飞书私聊：找 main 或 找其他 agent       │
+└─────────────────────────────────────────────┘
+                    │
+        ┌───────────┴───────────┐
+        ▼                       ▼
+   ┌─────────┐◄──sessions_send──►┌──────────┐
+   │  main   │     (协作通信)     │ 新 agent │
+   └─────────┘                   └──────────┘
+   独立飞书bot                    独立飞书bot
+```
+
+### 步骤一：创建飞书应用（独立 Bot）
+
+1. 访问 [飞书开放平台](https://open.feishu.cn/app)
+2. 创建企业自建应用
+3. 记录 `App ID` 和 `App Secret`
+4. 配置权限（根据 agent 用途选择）：
+   - 基础：`contact:user.base:readonly`
+   - 消息：`im:message`, `im:message:send_as_bot`
+   - 文档：`docx:document`, `drive:drive` 等
+5. 发布版本 → 审核通过 → 添加到企业
+
+### 步骤二：修改 `~/.openclaw/openclaw.json`
+
+#### 2.1 在 `agents.list` 添加新 Agent
+
+```json
+{
+  "id": "新agent-id",
+  "name": "Agent名称",
+  "workspace": "/Users/weijian/.openclaw/workspace-新agent-id",
+  "skills": ["skill1", "skill2"],  // 可选：预装技能
+  "subagents": {
+    // 方式1：允许调用所有 agent
+    "allowAny": true
+
+    // 方式2：白名单（只能调指定的）
+    // "allowAgents": ["main", "shared"]
+  }
+}
+```
+
+#### 2.2 配置飞书账号（在 `channels.feishu.accounts`）
+
+```json
+{
+  "channels": {
+    "feishu": {
+      "accounts": {
+        "default": {},
+        "dev": {
+          "appId": "cli_xxx",
+          "appSecret": "xxx",
+          "botName": "开发专家"
+        },
+        "新agent-accountId": {
+          "appId": "cli_yyy",
+          "appSecret": "yyy",
+          "botName": "新Agent显示名"
+        }
+      }
+    }
+  }
+}
+```
+
+#### 2.3 绑定 Agent 到飞书账号（在 `bindings`）
+
+```json
+{
+  "bindings": [
+    {
+      "agentId": "main",
+      "match": {
+        "channel": "feishu",
+        "accountId": "default"
+      }
+    },
+    {
+      "agentId": "新agent-id",
+      "match": {
+        "channel": "feishu",
+        "accountId": "新agent-accountId"
+      }
+    }
+  ]
+}
+```
+
+#### 2.4 允许 Agent 间通信（在 `tools.agentToAgent`）
+
+```json
+{
+  "tools": {
+    "agentToAgent": {
+      "enabled": true,
+      "allow": ["main", "dev", "新agent-id"]  // 添加到白名单
+    }
+  }
+}
+```
+
+### 步骤三：创建工作空间
+
+```bash
+mkdir -p ~/.openclaw/workspace-新agent-id
+cd ~/.openclaw/workspace-新agent-id
+
+# 可选：复制模板文件
+cp ~/.openclaw/workspace/AGENTS.md .
+cp ~/.openclaw/workspace/SOUL.md .
+cp ~/.openclaw/workspace/USER.md .
+```
+
+### 步骤四：重启 Gateway
+
+```bash
+openclaw gateway restart
+```
+
+### 配置示例（完整）
+
+以 `dev` agent 为例：
+
+```json
+// agents.list
+{
+  "id": "dev",
+  "name": "开发专家",
+  "workspace": "/Users/weijian/.openclaw/workspace-dev",
+  "skills": ["github", "gh-issues"],
+  "subagents": {
+    "allowAny": true
+  }
+}
+
+// channels.feishu.accounts
+"dev": {
+  "appId": "cli_a920c309463adcb1",
+  "appSecret": "QzyPQ1XsWqc75azF7hkmAdjYYzrsjxOd",
+  "botName": "开发专家"
+}
+
+// bindings
+{
+  "agentId": "dev",
+  "match": {
+    "channel": "feishu",
+    "accountId": "dev"
+  }
+}
+
+// tools.agentToAgent.allow
+["main", "dev", "shared"]
+```
+
+### 验证
+
+1. **直接对话**：在飞书搜索 bot 名称，发消息测试
+2. **协作调度**：在 main 中调用 `sessions_send`：
+   ```
+   sessions_send(
+     sessionKey: "agent:dev:feishu:dev:direct:ou_xxx",
+     message: "测试消息"
+   )
+   ```
+
+### 注意事项
+
+- **accountId 要一致**：`bindings[].match.accountId` = `channels.feishu.accounts` 的 key
+- **工作空间独立**：每个 agent 有自己的 workspace，互不干扰
+- **技能可定制**：不同 agent 可以装不同的技能
+- **权限控制**：用 `allowAny` 或 `allowAgents` 控制谁能调谁
+
+---
+
 ## 已安装技能
 
 ### 自建技能
@@ -130,10 +316,33 @@
 
 ---
 
+## 毕设项目（VibeCheck）
+
+### 项目信息
+- **题目**：基于语义理解与情感分析的华语流行歌曲推荐系统设计与实现
+- **指导老师**：陈茜
+- **服务器**：49.233.41.129（腾讯云）
+
+### 技术栈
+- **后端**：Python + PostgreSQL + pgvector
+- **前端**：Vue3 + Vite
+- **特征体系**：TF-IDF（理性）+ LLM embedding（感性）
+- **氛围标签**：治愈、伤感、热血、浪漫等
+
+### 当前状态
+- ✅ 系统已部署上线
+- ✅ 5万+ 华语歌曲数据库
+- ✅ 氛围搜索、歌词语义检索、智能推荐
+- ⏳ 准备中期答辩（PPT需补充算法细节）
+- ⏳ 用户调研、论文撰写
+
+---
+
 ## 待办事项
 
 | 优先级 | 事项 | 状态 |
 |--------|------|------|
+| 高 | 中期答辩准备 | 🔄 进行中 |
 | 高 | SOW 真实会议纪要测试 | ⏳ |
 | 中 | SOW README 文档 | ⏳ |
 | 中 | 知识库目录创建 | ⏳ 待确认 |
@@ -141,4 +350,28 @@
 
 ---
 
-*最后更新：2026-03-19*
+## 记忆仓库
+- **GitHub**: https://github.com/hwj123hwj/dabai-memory
+- **用途**: 大白专属记忆备份仓库
+- **最后同步**: 2026-03-23
+
+## 龙虾军团仓库
+- **GitHub**: https://github.com/hwj123hwj/lobster-legion
+- **用途**: 三主 agent（大白、星期五、贾维斯）协作管理，部署在不同物理服务器
+- **结构**: 每主 agent 独立目录 + shared-knowledge 共享区
+
+## boot-md Hook 经验
+- BOOT.md 里写**指令**，不要写 `$(command)` shell 语法
+- 内容要简单，复杂指令会导致 boot session 出错
+- 配置: `openclaw hooks enable boot-md`，在工作区创建 BOOT.md
+
+## Agent 架构更新（2026-03-28）
+新增 agent:
+| Agent | 用途 | 模型 |
+|-------|------|------|
+| `intel` | 情报助手 | zai/glm-4.7 |
+| `money-assistant` | 赚钱助手 | zai/glm-4.7 |
+
+---
+
+*最后更新：2026-03-29*
